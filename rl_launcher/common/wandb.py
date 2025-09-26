@@ -5,7 +5,8 @@ from socket import gethostname
 
 import absl.flags as flags
 import ml_collections
-import wandb
+# import wandb
+import swanlab as wandb
 
 
 def _recursive_flatten_dict(d: dict):
@@ -44,13 +45,11 @@ class WandBLogger(object):
     ):
         self.config = wandb_config
         if self.config.unique_identifier == "":
-            self.config.unique_identifier = datetime.datetime.now().strftime(
-                "%Y%m%d_%H%M%S"
-            )
+            self.config.unique_identifier = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
 
         self.config.experiment_id = (
             self.experiment_id
-        ) = f"{self.config.exp_descriptor}_{self.config.unique_identifier}"  # NOQA
+        ) = f"{self.config.exp_descriptor}{self.config.unique_identifier}"  # NOQA
 
         print(self.config)
 
@@ -77,6 +76,7 @@ class WandBLogger(object):
             id=self.config.experiment_id,
             save_code=True,
             mode=mode,
+            resume=True,
         )
 
         if flags.FLAGS.is_parsed():

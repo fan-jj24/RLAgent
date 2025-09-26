@@ -1,10 +1,10 @@
 import collections
-from typing import Any, Iterator, Optional, Sequence, Tuple, Union
+from typing import Any, Iterator, Optional, Sequence, Tuple, Union, Dict, Iterable
 
 import gymnasium as gym
 import jax
 import numpy as np
-from serl_launcher.data.dataset import Dataset, DatasetDict
+from serl_launcher.data.dataset import Dataset, DatasetDict, _sample
 
 
 def _init_replay_dict(
@@ -110,3 +110,111 @@ class ReplayBuffer(Dataset):
                 raise RuntimeError(f"last_idx {last_idx} >= self._size {self._size}")
             last_idx, batch = self.download(last_idx, self._size)
             yield batch
+
+    
+class SimpleReplayBuffer(ReplayBuffer):
+    def __init__(
+        self,
+        observation_space: gym.Space,
+        action_space: gym.Space,
+        capacity: int,
+    ):
+        dataset_dict = {
+            "observations": _init_replay_dict(observation_space, capacity),
+            "noises": np.empty((capacity, *action_space.shape), dtype=action_space.dtype),
+            "log_probs": np.empty((capacity,), dtype=np.float32),
+            "advantages": np.empty((capacity,), dtype=np.float32),
+            # "dones": np.empty((capacity,), dtype=np.int8),
+        }
+        self.observation_space = observation_space
+
+        super().__init__(observation_space, action_space, capacity)
+        self.dataset_dict = dataset_dict
+        self._latest_index = 0
+        self._size = 0
+
+    def clear(self):
+        def _zero_recursively(arr):
+            if isinstance(arr, dict):
+                for k in arr:
+                    _zero_recursively(arr[k])
+            else:
+                arr[:] = 0
+
+        self._size = 0
+        self._latest_index = 0
+        for key in self.dataset_dict:
+            _zero_recursively(self.dataset_dict[key])
+
+    def __len__(self) -> int:
+        return self._size
+    
+    def insert(self, data_dict: Dict[str, Any]):
+
+        reduced_data_dict = {
+            "observations": data_dict["observations"],
+            "noises": data_dict["noises"],
+            "log_probs": data_dict["log_probs"],
+            "advantages": data_dict["advantages"],
+            # "dones": data_dict["dones"],
+        }
+
+        for k in reduced_data_dict:
+            if isinstance(self.dataset_dict[k], dict):
+                _insert_recursively(self.dataset_dict[k], reduced_data_dict[k], self._latest_index)
+            else:
+                self.dataset_dict[k][self._latest_index] = reduced_data_dict[k]
+
+        self._latest_index = (self._latest_index + 1) % self._capacity
+        self._size = min(self._size + 1, self._capacity)
+
+    def sample(
+        self,
+        batch_size: int,
+        keys: Optional[Iterable[str]] = None,
+        indx: Optional[np.ndarray] = None,
+    ):
+
+        if indx is None:
+            if hasattr(self.np_random, "integers"):
+                indx = self.np_random.integers(len(self), size=batch_size)
+            else:
+                indx = self.np_random.randint(len(self), size=batch_size)
+
+        if keys is None:
+            keys = list(self.dataset_dict.keys())
+        else:
+            keys = list(keys)
+
+        batch = {}
+        for k in keys:
+            if isinstance(self.dataset_dict[k], dict):
+                batch[k] = _sample(self.dataset_dict[k], indx)
+            else:
+                batch[k] = self.dataset_dict[k][indx]
+
+        return batch
+
+    def sample_sequential(
+        self,
+        batch_size: int,
+        start_idx: int,
+        keys: Optional[Iterable[str]] = None,
+    ):
+        end_idx = min(start_idx + batch_size, self._size)
+        indx = np.arange(start_idx, end_idx)
+
+        if keys is None:
+            keys = list(self.dataset_dict.keys())
+        else:
+            keys = list(keys)
+
+        batch = {}
+        for k in keys:
+            if isinstance(self.dataset_dict[k], dict):
+                batch[k] = _sample(self.dataset_dict[k], indx)
+            else:
+                batch[k] = self.dataset_dict[k][indx]
+
+        return batch, end_idx - 1
+

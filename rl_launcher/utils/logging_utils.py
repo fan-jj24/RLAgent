@@ -14,7 +14,7 @@ import cloudpickle as pickle
 import time
 from collections import deque
 from typing import Optional
-import yaml
+
 import numpy as np
 
 import gymnasium as gym
@@ -221,7 +221,3 @@ class RecordEpisodeStatistics(gym.Wrapper, gym.utils.RecordConstructorArgs):
             truncations,
             infos,
         )
-    
-
-
-

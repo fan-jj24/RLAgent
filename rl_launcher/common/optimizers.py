@@ -1,11 +1,10 @@
-from typing import Optional, Tuple
-import jax
-import jax.numpy as jnp
+from typing import Optional
+
 import optax
 
 
 def make_optimizer(
-    learning_rate: float = 2.5e-5,
+    learning_rate: float = 3e-4,
     warmup_steps: int = 0,
     cosine_decay_steps: Optional[int] = None,
     weight_decay: Optional[float] = None,
@@ -14,11 +13,11 @@ def make_optimizer(
 ) -> optax.GradientTransformation:
     if cosine_decay_steps is not None:
         learning_rate_schedule = optax.warmup_cosine_decay_schedule(
-            init_value=2.5e-6,
+            init_value=0.0,
             peak_value=learning_rate,
             warmup_steps=warmup_steps,
             decay_steps=cosine_decay_steps,
-            end_value=2.5e-6,
+            end_value=0.0,
         )
     else:
         learning_rate_schedule = optax.join_schedules(
@@ -55,46 +54,3 @@ def make_optimizer(
         return optimizer(
             learning_rate=learning_rate_schedule, weight_decay=weight_decay
         )
-
-
-def compute_alpha_with_state(
-    state: Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray],
-    step: jnp.ndarray,
-    rl_loss_abs: jnp.ndarray,
-    pretrain_loss: jnp.ndarray
-) -> Tuple[jnp.ndarray, Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
-    smoothing_factor = 0.9
-    rl_loss_ema, pretrain_loss_ema, initialized = state
-    new_rl_ema = jnp.where(
-        initialized,
-        smoothing_factor * rl_loss_ema + (1 - smoothing_factor) * rl_loss_abs,
-        rl_loss_abs
-    )
-    new_pretrain_ema = jnp.where(
-        initialized,
-        smoothing_factor * pretrain_loss_ema + (1 - smoothing_factor) * pretrain_loss,
-        pretrain_loss
-    )
-    new_initialized = jnp.logical_or(initialized, jnp.array(True))
-    
-    alpha_0_to_500 = 0.2 + (step / 500) * 0.6
-    alpha_500_to_1000 = 0.8 + ((step - 500) / 500) * 0.1
-    
-    target_ratio = jnp.where(
-        step < 500,
-        alpha_0_to_500,
-        jnp.where(
-            step < 1000,
-            alpha_500_to_1000,
-            0.9
-        )
-    )
-    
-    rl_safe = jnp.maximum(1e-8, new_rl_ema)
-    alpha = (target_ratio * new_pretrain_ema) / (rl_safe * (1 - target_ratio))
-    
-    alpha = jnp.clip(alpha, 0.001, 100.0)
-    
-    new_state = (new_rl_ema, new_pretrain_ema, new_initialized)
-    return alpha, new_state
-
